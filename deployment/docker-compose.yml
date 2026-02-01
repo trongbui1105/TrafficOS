@@ -11,7 +11,7 @@ services:
       - "9092:9092"
     environment:
       # --- REQUIRED for KRaft ---
-      CLUSTER_ID: FcZn6E4kQQm3NDREcejxyA
+      CLUSTER_ID: <cluster_id>
 
       # --- KRaft mode ---
       KAFKA_NODE_ID: 1
@@ -50,9 +50,9 @@ services:
     platform: linux/arm64
     container_name: postgres
     environment:
-      POSTGRES_DB: traffic
-      POSTGRES_USER: traffic
-      POSTGRES_PASSWORD: traffic
+      POSTGRES_DB: <database_name>
+      POSTGRES_USER: <database_user>
+      POSTGRES_PASSWORD: <database_password>
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
