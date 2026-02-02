@@ -20,7 +20,7 @@ func Load() Config {
 		GroupID:     getEnv("KAFKA_GROUP_ID", "traffic-processor"),
 		InputTopic:  getEnv("KAFKA_INPUT_TOPIC", "traffic.raw"),
 		OutputTopic: getEnv("KAFKA_OUTPUT_TOPIC", "traffic.analyzed"),
-		WindowSize:  getDuration("ANALYSIS_WINDOW_SIZE", 30*time.Second),
+		WindowSize:  getDuration("WINDOW_SIZE", 30*time.Second),
 	}
 }
 
