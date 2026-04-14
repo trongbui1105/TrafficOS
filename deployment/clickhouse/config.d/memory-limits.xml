@@ -1,0 +1,11 @@
+<clickhouse>
+    <!-- Docker mem_limit is 3 GB (6 GB VM). max_server_memory_usage is 2.5 GB so
+         ClickHouse self-throttles 500 MB before the Docker hard kill. -->
+    <max_server_memory_usage>2684354560</max_server_memory_usage>  <!-- 2.5 GB -->
+
+    <!-- Caches — generous now that we have headroom -->
+    <mark_cache_size>536870912</mark_cache_size>           <!-- 512 MB -->
+    <uncompressed_cache_size>268435456</uncompressed_cache_size>   <!-- 256 MB -->
+
+    <compiled_expression_cache_size>0</compiled_expression_cache_size>
+</clickhouse>

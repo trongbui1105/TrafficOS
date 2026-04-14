@@ -1,0 +1,88 @@
+<clickhouse>
+    <!-- Limit system table sizes so they don't slowly consume all available memory.
+         By default ClickHouse keeps query_log, trace_log, part_log etc. indefinitely
+         in memory-backed MergeTree tables — on a small VM these fill up and trigger OOM.
+
+         Strategy:
+           • Keep only the last 1 day of every system log table (TTL)
+           • Cap in-memory buffer to 2048 rows, reserve 1024 rows
+           • Disable noisy logs (trace_log, processors_profile_log) entirely
+    -->
+
+    <!-- text_log: server log messages — biggest offender at 126 MB+ -->
+    <text_log>
+        <database>system</database>
+        <table>text_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>2048</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <!-- Only ERROR and above — TRACE/DEBUG messages massively inflate this table -->
+        <level>error</level>
+    </text_log>
+
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>2048</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+    </query_log>
+
+    <query_thread_log>
+        <database>system</database>
+        <table>query_thread_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>2048</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+    </query_thread_log>
+
+    <!-- Disable chatty logs not needed in dev -->
+    <trace_log remove="remove"/>
+    <processors_profile_log remove="remove"/>
+    <query_views_log remove="remove"/>
+    <opentelemetry_span_log remove="remove"/>
+    <zookeeper_log remove="remove"/>
+
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>2048</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+    </part_log>
+
+    <metric_log>
+        <database>system</database>
+        <table>metric_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>8192</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+    </metric_log>
+
+    <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>8192</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+
+    <session_log>
+        <database>system</database>
+        <table>session_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>2048</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+    </session_log>
+</clickhouse>

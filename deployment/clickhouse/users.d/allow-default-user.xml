@@ -1,0 +1,21 @@
+<clickhouse>
+  <users>
+    <default>
+      <!-- Allow connections from any host (needed for DBeaver / external tools) -->
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+
+      <!-- Cap memory per query so one expensive query cannot take down the server.
+           512 MB is generous for this dev workload (all tables are small). -->
+      <profile>default</profile>
+    </default>
+  </users>
+
+  <profiles>
+    <default>
+      <!-- 512 MB per query — enough for all dashboard/API queries in this system -->
+      <max_memory_usage>536870912</max_memory_usage>
+    </default>
+  </profiles>
+</clickhouse>
