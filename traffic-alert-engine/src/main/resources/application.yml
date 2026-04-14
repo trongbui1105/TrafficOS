@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: traffic-alert-engine
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:kafka:9092}
+    consumer:
+      group-id: traffic-alert-engine
+      auto-offset-reset: latest
+      properties:
+        schema.registry.url: ${SCHEMA_REGISTRY_URL:http://schema-registry:8082}
+        specific.avro.reader: true
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+  datasource:
+    url: ${CLICKHOUSE_URL:jdbc:ch://clickhouse:8123/default}?compress=0
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+
+traffic:
+  topics:
+    input: ${KAFKA_INPUT_TOPIC:traffic.analyzed}
+    output: ${KAFKA_OUTPUT_TOPIC:traffic.alerts}
+  alert:
+    high-threshold-kmh: ${ALERT_HIGH_THRESHOLD:10.0}
+    medium-threshold-kmh: ${ALERT_MEDIUM_THRESHOLD:20.0}
+    low-threshold-kmh: ${ALERT_LOW_THRESHOLD:30.0}
+    webhook-url: ${ALERT_WEBHOOK_URL:}
+    webhook-severity: ${ALERT_WEBHOOK_SEVERITY:HIGH}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+server:
+  port: 8091
