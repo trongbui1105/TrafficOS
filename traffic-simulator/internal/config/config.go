@@ -16,18 +16,34 @@ type RoadConfig struct {
 }
 
 type AppConfig struct {
-	KafkaBroker string
-	Topic       string
-	Interval    time.Duration
-	Roads       []RoadConfig
+	KafkaBroker       string
+	Topic             string
+	SchemaRegistryURL string
+	ClickHouseURL     string // e.g. http://clickhouse:8123 — used for direct enrichment inserts
+	Interval          time.Duration
+	WeatherInterval   time.Duration
+	IncidentInterval  time.Duration
+	Roads             []RoadConfig
 }
 
 func LoadConfig() (*AppConfig, error) {
 	broker := getEnv("KAFKA_BROKER", "kafka:9092")
 	topic := getEnv("KAFKA_TOPIC", "traffic.raw")
+	schemaRegistryURL := getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082")
+	clickHouseURL := getEnv("CLICKHOUSE_URL", "http://clickhouse:8123")
 	intervalStr := getEnv("GENERATOR_INTERVAL", "5s")
+	weatherStr := getEnv("WEATHER_INTERVAL", "30s")
+	incidentStr := getEnv("INCIDENT_INTERVAL", "20s")
 
 	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return nil, err
+	}
+	weatherInterval, err := time.ParseDuration(weatherStr)
+	if err != nil {
+		return nil, err
+	}
+	incidentInterval, err := time.ParseDuration(incidentStr)
 	if err != nil {
 		return nil, err
 	}
@@ -39,10 +55,14 @@ func LoadConfig() (*AppConfig, error) {
 	}
 
 	return &AppConfig{
-		KafkaBroker: broker,
-		Topic:       topic,
-		Interval:    interval,
-		Roads:       roads,
+		KafkaBroker:       broker,
+		Topic:             topic,
+		SchemaRegistryURL: schemaRegistryURL,
+		ClickHouseURL:     clickHouseURL,
+		Interval:          interval,
+		WeatherInterval:   weatherInterval,
+		IncidentInterval:  incidentInterval,
+		Roads:             roads,
 	}, nil
 }
 

@@ -1,5 +1,5 @@
 # Stage 1: Build binary
-FROM golang:1.23-alpine AS build
+FROM golang:1.25-alpine AS build
 
 WORKDIR /app
 
@@ -29,6 +29,9 @@ COPY --from=build /app/simulator .
 
 # COPY road name files
 COPY data ./data
+
+# COPY Avro schemas (used at runtime to register with Schema Registry)
+COPY schemas ./schemas
 
 # RUN simulator
 CMD ["./simulator"]

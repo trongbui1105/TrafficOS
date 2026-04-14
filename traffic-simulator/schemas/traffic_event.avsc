@@ -1,0 +1,38 @@
+{
+  "type": "record",
+  "name": "TrafficEvent",
+  "namespace": "com.traffic",
+  "doc": "A real-time traffic density snapshot for a single road segment.",
+  "fields": [
+    {
+      "name": "eventType",
+      "type": "string",
+      "doc": "Type of event, e.g. TRAFFIC_DENSITY"
+    },
+    {
+      "name": "roadId",
+      "type": "string",
+      "doc": "Stable road identifier used as Kafka partition key"
+    },
+    {
+      "name": "roadName",
+      "type": "string",
+      "doc": "Human-readable road name"
+    },
+    {
+      "name": "vehicleCount",
+      "type": "int",
+      "doc": "Number of vehicles observed on the road"
+    },
+    {
+      "name": "avgSpeed",
+      "type": "double",
+      "doc": "Average vehicle speed in km/h"
+    },
+    {
+      "name": "timestamp",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Event creation time in milliseconds since epoch (UTC)"
+    }
+  ]
+}
