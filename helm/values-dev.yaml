@@ -1,0 +1,14 @@
+# Local kind cluster overrides
+# Usage: helm install traffic-system ./helm -f helm/values-dev.yaml
+
+global:
+  imagePullPolicy: Never    # use locally built images, no registry pull
+
+trafficApi:
+  replicaCount: 1           # single replica is fine locally
+  ingress:
+    enabled: false          # use kubectl port-forward instead
+
+trafficDashboard:
+  ingress:
+    enabled: false

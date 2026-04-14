@@ -1,0 +1,25 @@
+{{- if .Values.trafficApi.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: traffic-api
+  labels:
+    {{- include "traffic-system.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # allow long-lived WebSocket connections
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/upgrade: "websocket"
+    nginx.ingress.kubernetes.io/connection: "Upgrade"
+spec:
+  rules:
+    - host: {{ .Values.trafficApi.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: traffic-api
+                port:
+                  number: 80
+{{- end }}

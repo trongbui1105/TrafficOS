@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-api
+  labels:
+    {{- include "traffic-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: traffic-api
+spec:
+  replicas: {{ .Values.trafficApi.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traffic-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: traffic-api
+    spec:
+      containers:
+        - name: traffic-api
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.trafficApi.image }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.trafficApi.port }}
+          env:
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: SCHEMA_REGISTRY_URL
+              value: {{ .Values.schemaRegistry.url | quote }}
+            - name: CLICKHOUSE_URL
+              value: {{ .Values.clickhouse.url | quote }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            {{- range $k, $v := .Values.trafficApi.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.trafficApi.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.trafficApi.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

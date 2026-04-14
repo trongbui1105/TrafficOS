@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-stream-processor
+  labels:
+    {{- include "traffic-system.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.trafficStreamProcessor.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traffic-stream-processor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: traffic-stream-processor
+    spec:
+      containers:
+        - name: traffic-stream-processor
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.trafficStreamProcessor.image }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.trafficStreamProcessor.port }}
+          env:
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: SCHEMA_REGISTRY_URL
+              value: {{ .Values.schemaRegistry.url | quote }}
+            - name: CLICKHOUSE_URL
+              value: {{ .Values.clickhouse.url | quote }}
+            {{- range $k, $v := .Values.trafficStreamProcessor.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.trafficStreamProcessor.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

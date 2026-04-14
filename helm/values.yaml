@@ -1,0 +1,62 @@
+# Default values — override with values-dev.yaml for local kind cluster
+# or values-prod.yaml for production.
+
+global:
+  imageRegistry: ""          # e.g. "ghcr.io/myorg/" for remote registry
+  imagePullPolicy: IfNotPresent
+
+kafka:
+  bootstrapServers: "kafka:9092"
+
+schemaRegistry:
+  url: "http://schema-registry:8082"
+
+clickhouse:
+  url: "jdbc:ch://clickhouse:8123/default"
+
+redis:
+  host: redis
+  port: 6379
+
+trafficSimulator:
+  image: traffic-simulator:latest
+  replicaCount: 1
+  env:
+    KAFKA_TOPIC: traffic.raw
+    GENERATOR_INTERVAL: "5s"
+
+trafficStreamProcessor:
+  image: traffic-stream-processor:latest
+  replicaCount: 1
+  port: 8090
+  env:
+    KAFKA_INPUT_TOPIC: traffic.raw
+    KAFKA_OUTPUT_TOPIC: traffic.analyzed
+    WINDOW_SIZE_SECONDS: "30"
+
+trafficApi:
+  image: traffic-api:latest
+  replicaCount: 2        # scale horizontally — stateless service
+  port: 8080
+  env:
+    KAFKA_ANALYZED_TOPIC: traffic.analyzed
+    KAFKA_ALERTS_TOPIC: traffic.alerts
+  ingress:
+    enabled: true
+    host: traffic-api.local
+
+trafficAlertEngine:
+  image: traffic-alert-engine:latest
+  replicaCount: 1
+  port: 8091
+  env:
+    KAFKA_INPUT_TOPIC: traffic.analyzed
+    KAFKA_OUTPUT_TOPIC: traffic.alerts
+
+trafficDashboard:
+  image: traffic-dashboard:latest
+  replicaCount: 1
+  port: 3000
+  ingress:
+    enabled: true
+    host: traffic.local

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-dashboard
+  labels:
+    {{- include "traffic-system.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.trafficDashboard.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traffic-dashboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: traffic-dashboard
+    spec:
+      containers:
+        - name: traffic-dashboard
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.trafficDashboard.image }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.trafficDashboard.port }}
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://traffic-api"
+            - name: NEXT_PUBLIC_WS_URL
+              value: "ws://traffic-api"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traffic-dashboard
+  labels:
+    {{- include "traffic-system.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: traffic-dashboard
+  ports:
+    - port: 80
+      targetPort: {{ .Values.trafficDashboard.port }}
