@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "TrafficEvent",
+  "namespace": "com.traffic",
+  "fields": [
+    {"name": "eventType",    "type": "string"},
+    {"name": "roadId",       "type": "string"},
+    {"name": "roadName",     "type": "string"},
+    {"name": "vehicleCount", "type": "int"},
+    {"name": "avgSpeed",     "type": "double"},
+    {
+      "name": "timestamp",
+      "type": {"type": "long", "logicalType": "timestamp-millis"}
+    }
+  ]
+}

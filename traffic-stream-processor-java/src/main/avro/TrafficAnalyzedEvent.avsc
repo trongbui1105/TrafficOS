@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "TrafficAnalyzedEvent",
+  "namespace": "com.traffic",
+  "fields": [
+    {"name": "roadId",         "type": "string"},
+    {"name": "roadName",       "type": "string"},
+    {
+      "name": "windowStart",
+      "type": {"type": "long", "logicalType": "timestamp-millis"}
+    },
+    {
+      "name": "windowEnd",
+      "type": {"type": "long", "logicalType": "timestamp-millis"}
+    },
+    {"name": "totalVehicles",  "type": "int"},
+    {"name": "avgSpeed",       "type": "double"},
+    {"name": "congested",      "type": "boolean"}
+  ]
+}

@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: traffic-stream-processor
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:kafka:9092}
+    admin:
+      # Don't fail startup if Kafka admin is briefly unreachable;
+      # KafkaAdmin will retry topic creation.
+      fail-fast: false
+    streams:
+      application-id: traffic-stream-processor
+      properties:
+        schema.registry.url: ${SCHEMA_REGISTRY_URL:http://schema-registry:8082}
+        # Exactly-once semantics via transactional producer
+        processing.guarantee: exactly_once_v2
+        # Checkpoint state every 10 seconds
+        commit.interval.ms: 10000
+        # Allow events up to 5s late before closing a window
+        max.task.idle.ms: 5000
+
+  datasource:
+    url: ${CLICKHOUSE_URL:jdbc:ch://clickhouse:8123/default}?compress=0
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+
+traffic:
+  topics:
+    input: ${KAFKA_INPUT_TOPIC:traffic.raw}
+    output: ${KAFKA_OUTPUT_TOPIC:traffic.analyzed}
+  window:
+    size-seconds: ${WINDOW_SIZE_SECONDS:30}
+  congestion:
+    speed-threshold-kmh: ${CONGESTION_SPEED_THRESHOLD:20.0}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+server:
+  port: 8090
