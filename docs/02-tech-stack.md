@@ -23,7 +23,7 @@
 
 ---
 
-### traffic-stream-processor-java — Java 21 + Spring Boot 3.x
+### traffic-stream-processor — Java 21 + Spring Boot 3.x
 
 | Library / Tool | Purpose |
 |---|---|

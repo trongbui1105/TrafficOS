@@ -95,7 +95,7 @@ Topics are pre-created via `TopicConfig.java` (Spring `@Bean NewTopic`) before K
 
 Schema IDs are encoded as 4-byte big-endian magic prefix on every Avro payload (Confluent wire format).
 
-### Kafka Streams pipeline — `traffic-stream-processor-java`
+### Kafka Streams pipeline — `traffic-stream-processor`
 ```java
 KStream<String, TrafficEvent> raw = builder.stream("traffic.raw");
 

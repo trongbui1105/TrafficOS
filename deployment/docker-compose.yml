@@ -181,7 +181,7 @@ services:
 
   traffic-stream-processor:
     build:
-      context: ../traffic-stream-processor-java
+      context: ../traffic-stream-processor
       dockerfile: Dockerfile
     container_name: traffic-stream-processor
     depends_on:
