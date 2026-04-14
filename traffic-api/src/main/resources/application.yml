@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: traffic-api
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:kafka:9092}
+    consumer:
+      group-id: traffic-api
+      auto-offset-reset: latest
+      properties:
+        schema.registry.url: ${SCHEMA_REGISTRY_URL:http://schema-registry:8082}
+        specific.avro.reader: true
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+
+  datasource:
+    # compress=0 disables LZ4 compression — required to work around a bug in
+    # clickhouse-jdbc 0.6.3 where RowBinary + LZ4 produces an "LZ4 magic mismatch"
+    # error on certain column types (Enum8, empty result sets, etc.)
+    url: ${CLICKHOUSE_URL:jdbc:ch://clickhouse:8123/default}?compress=0
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+
+traffic:
+  topics:
+    analyzed: ${KAFKA_ANALYZED_TOPIC:traffic.analyzed}
+    alerts: ${KAFKA_ALERTS_TOPIC:traffic.alerts}
+  redis:
+    road-ttl-seconds: 60
+  predictor:
+    url: ${PREDICTOR_URL:http://traffic-predictor:8000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+server:
+  port: 8080
