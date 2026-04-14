@@ -1,2 +1,5 @@
 .DS_Store
 docker-compose.local.yml
+.idea/
+.claude/
+*.iml
