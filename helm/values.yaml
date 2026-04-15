@@ -1,22 +1,58 @@
-# Default values — override with values-dev.yaml for local kind cluster
-# or values-prod.yaml for production.
+# Default values for trafficOS Helm chart.
+# Override with values-dev.yaml for local kind cluster or values-prod.yaml for production.
 
 global:
-  imageRegistry: ""          # e.g. "ghcr.io/myorg/" for remote registry
+  imageRegistry: ""           # e.g. "ghcr.io/myorg/" — trailing slash included
   imagePullPolicy: IfNotPresent
+  namespace: trafficOS
+
+# ─── Infrastructure ────────────────────────────────────────────────────────────
 
 kafka:
-  bootstrapServers: "kafka:9092"
+  image: apache/kafka:3.7.0
+  storage: 5Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
 
 schemaRegistry:
-  url: "http://schema-registry:8082"
+  image: confluentinc/cp-schema-registry:7.6.0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
 
 clickhouse:
-  url: "jdbc:ch://clickhouse:8123/default"
+  image: clickhouse/clickhouse-server:latest
+  storage: 5Gi
+  # max_memory_usage in bytes (2 GiB default)
+  maxMemory: 2147483648
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 3Gi
 
 redis:
-  host: redis
-  port: 6379
+  image: redis:7-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ─── Application services ───────────────────────────────────────────────────────
 
 trafficSimulator:
   image: traffic-simulator:latest
@@ -24,6 +60,13 @@ trafficSimulator:
   env:
     KAFKA_TOPIC: traffic.raw
     GENERATOR_INTERVAL: "5s"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 trafficStreamProcessor:
   image: traffic-stream-processor:latest
@@ -33,17 +76,34 @@ trafficStreamProcessor:
     KAFKA_INPUT_TOPIC: traffic.raw
     KAFKA_OUTPUT_TOPIC: traffic.analyzed
     WINDOW_SIZE_SECONDS: "30"
+    JAVA_OPTS: "-Xmx256m"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+    limits:
+      cpu: 1000m
+      memory: 768Mi
 
 trafficApi:
   image: traffic-api:latest
-  replicaCount: 2        # scale horizontally — stateless service
+  replicaCount: 2
   port: 8080
   env:
     KAFKA_ANALYZED_TOPIC: traffic.analyzed
     KAFKA_ALERTS_TOPIC: traffic.alerts
+    JAVA_OPTS: "-Xmx256m"
   ingress:
     enabled: true
-    host: traffic-api.local
+    host: api.trafficOS.local
+    ingressClassName: nginx
+  resources:
+    requests:
+      cpu: 200m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
 
 trafficAlertEngine:
   image: traffic-alert-engine:latest
@@ -52,6 +112,34 @@ trafficAlertEngine:
   env:
     KAFKA_INPUT_TOPIC: traffic.analyzed
     KAFKA_OUTPUT_TOPIC: traffic.alerts
+    JAVA_OPTS: "-Xmx256m"
+  # Optional webhook URL for external alert delivery (e.g. Slack, PagerDuty)
+  webhookUrl: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 300m
+      memory: 768Mi
+
+trafficPredictor:
+  image: traffic-predictor:latest
+  replicaCount: 1
+  port: 8000
+  # How often (seconds) the model is retrained from ClickHouse history
+  retrainInterval: 300
+  # How often (seconds) predictions are refreshed and written to ClickHouse
+  refreshInterval: 60
+  # How often (seconds) the in-memory model state is persisted to disk
+  persistInterval: 600
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 trafficDashboard:
   image: traffic-dashboard:latest
@@ -59,4 +147,12 @@ trafficDashboard:
   port: 3000
   ingress:
     enabled: true
-    host: traffic.local
+    host: trafficOS.local
+    ingressClassName: nginx
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi

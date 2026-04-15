@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-clickhouse-init
+  namespace: {{ .Values.global.namespace | default "trafficOS" }}
+  labels:
+    {{- include "trafficOS.labels" (merge (dict "component" "clickhouse") .) | nindent 4 }}
+data:
+  init.sql: |
+    -- ClickHouse initialization script
+    -- Runs automatically on first container startup via /docker-entrypoint-initdb.d/
+
+    -- Windowed traffic aggregations produced by traffic-stream-processor
+    CREATE TABLE IF NOT EXISTS traffic_analyzed (
+        road_id        String,
+        road_name      String,
+        window_start   DateTime,
+        window_end     DateTime,
+        total_vehicles UInt32,
+        avg_speed      Float32,
+        congested      Bool
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(window_start)
+    ORDER BY (road_id, window_start)
+    TTL window_start + INTERVAL 90 DAY;
+
+
+    -- Congestion alerts produced by traffic-alert-engine
+    CREATE TABLE IF NOT EXISTS traffic_alerts (
+        road_id      String,
+        road_name    String,
+        severity     Enum8('LOW' = 1, 'MEDIUM' = 2, 'HIGH' = 3),
+        message      String,
+        triggered_at DateTime
+    )
+    ENGINE = MergeTree()
+    ORDER BY (road_id, triggered_at)
+    TTL triggered_at + INTERVAL 30 DAY;
+
+
+    -- =====================================================================
+    -- Enrichment datasets produced directly by traffic-simulator (HTTP insert)
+    -- =====================================================================
+
+    -- Static/semi-static road metadata (upsert-style)
+    CREATE TABLE IF NOT EXISTS road_metadata (
+        road_id      String,
+        road_name    String,
+        district     String,
+        road_type    Enum8('highway' = 1, 'arterial' = 2, 'collector' = 3, 'local' = 4),
+        lanes        UInt8,
+        speed_limit  UInt16,
+        length_km    Float32,
+        lat          Float64,
+        lon          Float64,
+        updated_at   DateTime
+    )
+    ENGINE = ReplacingMergeTree(updated_at)
+    ORDER BY road_id;
+
+    -- Per-road weather observations
+    CREATE TABLE IF NOT EXISTS weather_observations (
+        road_id        String,
+        observed_at    DateTime,
+        condition      Enum8('clear' = 1, 'cloudy' = 2, 'rain' = 3, 'heavy_rain' = 4, 'fog' = 5, 'storm' = 6, 'haze' = 7),
+        temperature_c  Float32,
+        humidity_pct   UInt8,
+        wind_kph       Float32,
+        visibility_km  Float32,
+        rain_mm        Float32
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(observed_at)
+    ORDER BY (road_id, observed_at)
+    TTL observed_at + INTERVAL 30 DAY;
+
+    -- Traffic incidents with lifecycle (active/resolved)
+    CREATE TABLE IF NOT EXISTS traffic_incidents (
+        incident_id    String,
+        road_id        String,
+        road_name      String,
+        type           Enum8('accident' = 1, 'roadwork' = 2, 'breakdown' = 3, 'protest' = 4, 'flood' = 5, 'event' = 6, 'debris' = 7),
+        severity       Enum8('LOW' = 1, 'MEDIUM' = 2, 'HIGH' = 3),
+        status         Enum8('active' = 1, 'resolved' = 2),
+        lanes_blocked  UInt8,
+        description    String,
+        started_at     DateTime,
+        ended_at       Nullable(DateTime),
+        updated_at     DateTime
+    )
+    ENGINE = ReplacingMergeTree(updated_at)
+    PARTITION BY toYYYYMM(started_at)
+    ORDER BY (road_id, incident_id);
+
+    -- Environmental metrics (air quality + noise) per road
+    CREATE TABLE IF NOT EXISTS environment_metrics (
+        road_id      String,
+        observed_at  DateTime,
+        pm25         Float32,
+        pm10         Float32,
+        no2          Float32,
+        co_ppm       Float32,
+        aqi          UInt16,
+        noise_db     Float32
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(observed_at)
+    ORDER BY (road_id, observed_at)
+    TTL observed_at + INTERVAL 30 DAY;
+
+    -- Vehicle classification per road per tick
+    CREATE TABLE IF NOT EXISTS vehicle_classification (
+        road_id      String,
+        observed_at  DateTime,
+        cars         UInt32,
+        trucks       UInt32,
+        buses        UInt32,
+        motorcycles  UInt32,
+        bicycles     UInt32,
+        emergency    UInt32,
+        pedestrians  UInt32
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(observed_at)
+    ORDER BY (road_id, observed_at)
+    TTL observed_at + INTERVAL 30 DAY;
+
+
+    -- =====================================================================
+    -- ML Prediction service output (traffic-predictor Python service)
+    -- =====================================================================
+
+    -- Per-road speed forecasts produced every minute
+    CREATE TABLE IF NOT EXISTS traffic_predictions (
+        road_id                  String,
+        predicted_at             DateTime,
+        horizon_minutes          UInt8,
+        predicted_avg_speed      Float32,
+        lower_bound              Float32,
+        upper_bound              Float32,
+        congestion_probability   Float32
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(predicted_at)
+    ORDER BY (road_id, predicted_at, horizon_minutes)
+    TTL predicted_at + INTERVAL 7 DAY;
+
+    -- Anomalies detected by the ML engine (z-score deviation from historical baseline)
+    CREATE TABLE IF NOT EXISTS traffic_anomalies (
+        road_id           String,
+        road_name         String,
+        detected_at       DateTime,
+        current_speed     Float32,
+        expected_speed    Float32,
+        deviation_sigma   Float32,
+        anomaly_type      Enum8('slow_anomaly' = 1, 'fast_anomaly' = 2),
+        severity          Enum8('LOW' = 1, 'MEDIUM' = 2, 'HIGH' = 3)
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(detected_at)
+    ORDER BY (road_id, detected_at)
+    TTL detected_at + INTERVAL 14 DAY;

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: {{ .Values.global.namespace | default "trafficOS" }}
+  labels:
+    {{- include "trafficOS.labels" (merge (dict "component" "redis") .) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "trafficOS.selectorLabels" (merge (dict "component" "redis") .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "trafficOS.selectorLabels" (merge (dict "component" "redis") .) | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.redis.image }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 4
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}

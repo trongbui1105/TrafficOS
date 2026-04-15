@@ -1,24 +1,20 @@
 {{/*
-Expand the name of the chart.
+trafficOS.labels — standard Kubernetes recommended labels applied to every resource.
+Usage: {{ include "trafficOS.labels" . | nindent 4 }}
 */}}
-{{- define "traffic-system.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
-Common labels applied to all resources.
-*/}}
-{{- define "traffic-system.labels" -}}
-helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Selector labels for a given component.
-Usage: {{ include "traffic-system.selectorLabels" (dict "component" "traffic-api") }}
-*/}}
-{{- define "traffic-system.selectorLabels" -}}
+{{- define "trafficOS.labels" -}}
 app.kubernetes.io/name: {{ .component }}
-app.kubernetes.io/instance: {{ $.Release.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+{{- end }}
+
+{{/*
+trafficOS.selectorLabels — minimal label set used in selector.matchLabels and
+pod template labels so that selectors remain stable across upgrades.
+Usage: {{ include "trafficOS.selectorLabels" . | nindent 6 }}
+*/}}
+{{- define "trafficOS.selectorLabels" -}}
+app.kubernetes.io/name: {{ .component }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

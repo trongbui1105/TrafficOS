@@ -1,0 +1,25 @@
+{{- if .Values.trafficDashboard.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: traffic-dashboard
+  namespace: {{ .Values.global.namespace | default "trafficOS" }}
+  labels:
+    {{- include "trafficOS.labels" (merge (dict "component" "traffic-dashboard") .) | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: {{ .Values.trafficDashboard.ingress.ingressClassName | default "nginx" }}
+  rules:
+    - host: {{ .Values.trafficDashboard.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: traffic-dashboard
+                port:
+                  number: 80
+{{- end }}

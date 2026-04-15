@@ -1,14 +1,122 @@
 # Local kind cluster overrides
 # Usage: helm install traffic-system ./helm -f helm/values-dev.yaml
+#
+# Prerequisites:
+#   kind create cluster --config deployment/kind-config.yaml
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+#   kind load docker-image <image> --name trafficOS   (for each locally built image)
 
 global:
-  imagePullPolicy: Never    # use locally built images, no registry pull
+  imagePullPolicy: Never      # use locally loaded images; no registry pull attempted
+  namespace: trafficOS
+
+# ─── Infrastructure — smaller footprint for dev ────────────────────────────────
+
+kafka:
+  storage: 1Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+schemaRegistry:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+clickhouse:
+  storage: 1Gi
+  maxMemory: 1610612736        # 1.5 GiB
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: 1000m
+      memory: 1536Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# ─── Application services — single replicas, tight limits ──────────────────────
+
+trafficSimulator:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+trafficStreamProcessor:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
 
 trafficApi:
-  replicaCount: 1           # single replica is fine locally
+  replicaCount: 1
   ingress:
-    enabled: false          # use kubectl port-forward instead
+    enabled: true
+    host: api.trafficOS.local
+    ingressClassName: nginx
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 300m
+      memory: 384Mi
+
+trafficAlertEngine:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 384Mi
+    limits:
+      cpu: 200m
+      memory: 384Mi
+
+trafficPredictor:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
 
 trafficDashboard:
+  replicaCount: 1
   ingress:
-    enabled: false
+    enabled: true
+    host: trafficOS.local
+    ingressClassName: nginx
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

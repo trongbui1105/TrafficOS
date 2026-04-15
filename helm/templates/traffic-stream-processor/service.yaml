@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: traffic-stream-processor
+  namespace: {{ .Values.global.namespace | default "trafficOS" }}
+  labels:
+    {{- include "trafficOS.labels" (merge (dict "component" "traffic-stream-processor") .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "trafficOS.selectorLabels" (merge (dict "component" "traffic-stream-processor") .) | nindent 4 }}
+  ports:
+    - name: actuator
+      port: {{ .Values.trafficStreamProcessor.port }}
+      targetPort: {{ .Values.trafficStreamProcessor.port }}
+      protocol: TCP

@@ -1,34 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: traffic-api
+  name: traffic-predictor
   namespace: {{ .Values.global.namespace | default "trafficOS" }}
   labels:
-    {{- include "trafficOS.labels" (merge (dict "component" "traffic-api") .) | nindent 4 }}
+    {{- include "trafficOS.labels" (merge (dict "component" "traffic-predictor") .) | nindent 4 }}
 spec:
-  replicas: {{ .Values.trafficApi.replicaCount }}
+  replicas: {{ .Values.trafficPredictor.replicaCount }}
   selector:
     matchLabels:
-      {{- include "trafficOS.selectorLabels" (merge (dict "component" "traffic-api") .) | nindent 6 }}
+      {{- include "trafficOS.selectorLabels" (merge (dict "component" "traffic-predictor") .) | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "trafficOS.selectorLabels" (merge (dict "component" "traffic-api") .) | nindent 8 }}
+        {{- include "trafficOS.selectorLabels" (merge (dict "component" "traffic-predictor") .) | nindent 8 }}
     spec:
       initContainers:
-        - name: wait-for-kafka
-          image: busybox:1.36
-          imagePullPolicy: IfNotPresent
-          command:
-            - sh
-            - -c
-            - |
-              echo "Waiting for kafka:9092..."
-              until nc -z kafka 9092; do
-                echo "kafka not ready, sleeping 2s"
-                sleep 2
-              done
-              echo "kafka is ready"
         - name: wait-for-clickhouse
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
@@ -56,36 +43,36 @@ spec:
               done
               echo "redis is ready"
       containers:
-        - name: traffic-api
-          image: "{{ .Values.global.imageRegistry }}{{ .Values.trafficApi.image }}"
+        - name: traffic-predictor
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.trafficPredictor.image }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http
-              containerPort: {{ .Values.trafficApi.port }}
+              containerPort: {{ .Values.trafficPredictor.port }}
               protocol: TCP
           envFrom:
             - configMapRef:
                 name: trafficOS-config
           env:
-            - name: JAVA_OPTS
-              value: {{ .Values.trafficApi.env.JAVA_OPTS | quote }}
-            - name: KAFKA_ANALYZED_TOPIC
-              value: {{ .Values.trafficApi.env.KAFKA_ANALYZED_TOPIC | quote }}
-            - name: KAFKA_ALERTS_TOPIC
-              value: {{ .Values.trafficApi.env.KAFKA_ALERTS_TOPIC | quote }}
+            - name: RETRAIN_INTERVAL
+              value: {{ .Values.trafficPredictor.retrainInterval | quote }}
+            - name: REFRESH_INTERVAL
+              value: {{ .Values.trafficPredictor.refreshInterval | quote }}
+            - name: PERSIST_INTERVAL
+              value: {{ .Values.trafficPredictor.persistInterval | quote }}
           readinessProbe:
             httpGet:
-              path: /actuator/health
-              port: {{ .Values.trafficApi.port }}
-            initialDelaySeconds: 20
+              path: /health
+              port: {{ .Values.trafficPredictor.port }}
+            initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /actuator/health
-              port: {{ .Values.trafficApi.port }}
+              path: /health
+              port: {{ .Values.trafficPredictor.port }}
             initialDelaySeconds: 30
             periodSeconds: 15
             failureThreshold: 4
           resources:
-            {{- toYaml .Values.trafficApi.resources | nindent 12 }}
+            {{- toYaml .Values.trafficPredictor.resources | nindent 12 }}

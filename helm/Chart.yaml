@@ -1,6 +1,6 @@
 apiVersion: v2
-name: traffic-system
-description: Traffic Analysis System — full stack Helm chart
+name: trafficOS
+description: Real-time traffic analysis system for 572 HCMC roads
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
