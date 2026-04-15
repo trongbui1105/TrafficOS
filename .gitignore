@@ -3,3 +3,12 @@ docker-compose.local.yml
 .idea/
 .claude/
 *.iml
+
+# Test artifacts
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+target/
+coverage/
+.jest-cache/
