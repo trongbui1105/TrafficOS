@@ -18,6 +18,20 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     css: false,
     include: ['src/**/*.test.{ts,tsx}'],
+
+    coverage: {
+      provider: 'v8',
+      // 'text' prints a summary in the terminal; 'lcov' is what SonarQube reads
+      reporter: ['text', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.spec.{ts,tsx}',
+        'src/**/*.d.ts',
+        'src/app/layout.tsx',   // boilerplate — no logic to cover
+      ],
+    },
   },
   resolve: {
     alias: {

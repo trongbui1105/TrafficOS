@@ -22,6 +22,11 @@
         <avro.version>1.11.3</avro.version>
         <confluent.version>7.6.0</confluent.version>
         <clickhouse.version>0.6.3</clickhouse.version>
+        <!-- SonarQube / SonarCloud -->
+        <sonar.projectKey>traffic-alert-engine</sonar.projectKey>
+        <sonar.projectName>traffic-alert-engine</sonar.projectName>
+        <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <sonar.exclusions>**/generated-sources/**,**/*Application.java</sonar.exclusions>
     </properties>
 
     <dependencies>
@@ -118,6 +123,31 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+
+            <!-- JaCoCo: instrument tests and export coverage.xml for SonarQube -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals><goal>prepare-agent</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals><goal>report</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Sonar Maven plugin — run with: ./mvnw sonar:sonar -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>4.0.0.4121</version>
             </plugin>
         </plugins>
     </build>
