@@ -25,6 +25,10 @@ spring:
     url: ${CLICKHOUSE_URL:jdbc:ch://clickhouse:8123/default}?compress=0
     driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
 
+  jooq:
+    # ClickHouse dialect — enables toStartOfHour, LIMIT BY, FINAL, etc. in the DSL
+    sql-dialect: CLICKHOUSE
+
 traffic:
   topics:
     analyzed: ${KAFKA_ANALYZED_TOPIC:traffic.analyzed}

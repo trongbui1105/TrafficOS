@@ -2,34 +2,55 @@ package com.traffic.api.repository;
 
 import com.traffic.api.model.CityPulse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Record;
+import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.jooq.impl.DSL.*;
+
 /**
- * Reads the enrichment datasets (weather, incidents, environment,
- * vehicle mix, road metadata) from ClickHouse and assembles a
- * {@link CityPulse} snapshot. Each query uses the latest row per road so
- * the result reflects "right now" rather than a historical average.
+ * Reads enrichment datasets (weather, incidents, environment, vehicle mix,
+ * road metadata) from ClickHouse and assembles a {@link CityPulse} snapshot.
  *
- * <p>Every query casts ClickHouse Enum8 columns to String with
- * {@code toString()} to avoid the clickhouse-jdbc 0.6.3 LZ4 binary-row bug.
+ * <p>All queries use the JOOQ DSL instead of raw {@code JdbcTemplate} SQL
+ * strings. Parameters are always bound — never interpolated. For ClickHouse
+ * extensions without a standard SQL equivalent:
+ * <ul>
+ *   <li>{@code FINAL} (MergeTree deduplication) → {@code table(sql("… FINAL"))}
+ *   <li>{@code LIMIT 1 BY road_id} (latest-per-key) → derived table via
+ *       {@link #latestPerRoad(Table, int)}
+ *   <li>{@code toFloat64}, {@code toUInt64}, {@code isNaN}, {@code if}
+ *       → {@link org.jooq.impl.DSL#function(String, Class, org.jooq.QueryPart...)}
+ * </ul>
  */
 @Repository
 @RequiredArgsConstructor
 public class CityPulseRepository {
 
-    private final JdbcTemplate jdbc;
+    private final DSLContext ctx;
 
-    // ---------------------------------------------------------------
-    // Assembly entry point
-    // ---------------------------------------------------------------
+    // ── Table references ──────────────────────────────────────────────────────
+
+    // FINAL keyword (ClickHouse MergeTree deduplication) — not standard SQL
+    private static final Table<?> INCIDENTS_FINAL  = table(sql("traffic_incidents FINAL"));
+    private static final Table<?> ROAD_META_FINAL  = table(sql("road_metadata FINAL"));
+
+    private static final Table<?> WEATHER_OBS      = table(name("weather_observations"));
+    private static final Table<?> ENV_METRICS      = table(name("environment_metrics"));
+    private static final Table<?> VEHICLE_CLASS    = table(name("vehicle_classification"));
+    private static final Table<?> TRAFFIC_ANALYZED = table(name("traffic_analyzed"));
+
+    // ── Assembly entry point ──────────────────────────────────────────────────
+
     public CityPulse buildSnapshot() {
         return CityPulse.builder()
                 .generatedAt(Instant.now())
@@ -43,137 +64,416 @@ public class CityPulseRepository {
                 .build();
     }
 
-    // ---------------------------------------------------------------
-    // Incidents
-    // ---------------------------------------------------------------
+    // ── Incidents ─────────────────────────────────────────────────────────────
+
     public List<CityPulse.IncidentRecord> findActiveIncidents(int limit) {
-        String sql = String.format("""
-                SELECT incident_id,
-                       road_id,
-                       road_name,
-                       toString(type)     AS type,
-                       toString(severity) AS severity,
-                       toString(status)   AS status,
-                       lanes_blocked,
-                       description,
-                       started_at
-                FROM traffic_incidents FINAL
-                WHERE status = 'active'
-                ORDER BY severity DESC, started_at DESC
-                LIMIT %d
-                """, limit);
-        return jdbc.query(sql, (rs, i) -> CityPulse.IncidentRecord.builder()
-                .incidentId(rs.getString("incident_id"))
-                .roadId(rs.getString("road_id"))
-                .roadName(rs.getString("road_name"))
-                .type(rs.getString("type"))
-                .severity(rs.getString("severity"))
-                .status(rs.getString("status"))
-                .lanesBlocked(rs.getInt("lanes_blocked"))
-                .description(rs.getString("description"))
-                .startedAt(rs.getTimestamp("started_at").toInstant())
-                .build());
+        return ctx
+                .select(
+                        field(name("incident_id"),                       String.class),
+                        field(name("road_id"),                           String.class),
+                        field(name("road_name"),                         String.class),
+                        function("toString", String.class, field("type"    )).as("type"),
+                        function("toString", String.class, field("severity")).as("severity"),
+                        function("toString", String.class, field("status"  )).as("status"),
+                        field(name("lanes_blocked"),                     Integer.class),
+                        field(name("description"),                       String.class),
+                        field(name("started_at"),                        LocalDateTime.class))
+                .from(INCIDENTS_FINAL)
+                .where(field("status").eq(inline("active")))
+                .orderBy(field("severity").desc(), field("started_at").desc())
+                .limit(limit)
+                .fetch(r -> CityPulse.IncidentRecord.builder()
+                        .incidentId(r.get("incident_id",    String.class))
+                        .roadId(r.get("road_id",            String.class))
+                        .roadName(r.get("road_name",        String.class))
+                        .type(r.get("type",                 String.class))
+                        .severity(r.get("severity",         String.class))
+                        .status(r.get("status",             String.class))
+                        .lanesBlocked(r.get("lanes_blocked", Integer.class))
+                        .description(r.get("description",   String.class))
+                        .startedAt(toInstant(r.get("started_at", LocalDateTime.class)))
+                        .build());
     }
 
     private Map<String, Long> countActiveIncidentsByType() {
-        String sql = """
-                SELECT toString(type) AS type, count() AS n
-                FROM traffic_incidents FINAL
-                WHERE status = 'active'
-                GROUP BY type
-                ORDER BY n DESC
-                """;
-        List<Map.Entry<String, Long>> rows = jdbc.query(sql,
-                (rs, i) -> Map.entry(rs.getString("type"), rs.getLong("n")));
-        Map<String, Long> out = new LinkedHashMap<>();
-        rows.forEach(e -> out.put(e.getKey(), e.getValue()));
-        return out;
+        return ctx
+                .select(
+                        function("toString", String.class, field("type")).as("type"),
+                        count().as("n"))
+                .from(INCIDENTS_FINAL)
+                .where(field("status").eq(inline("active")))
+                .groupBy(field("type"))
+                .orderBy(field("n").desc())
+                .fetchMap(r -> r.get("type", String.class), r -> r.get("n", Long.class));
     }
 
-    // ---------------------------------------------------------------
-    // Weather
-    // ---------------------------------------------------------------
+    // ── Weather ───────────────────────────────────────────────────────────────
+
     private Map<String, Long> countWeatherMix() {
-        String sql = """
-                SELECT toString(condition) AS cond, count() AS n
-                FROM (
-                    SELECT condition
-                    FROM weather_observations
-                    WHERE observed_at >= now() - INTERVAL 10 MINUTE
-                    ORDER BY road_id, observed_at DESC
-                    LIMIT 1 BY road_id
-                )
-                GROUP BY cond
-                ORDER BY n DESC
-                """;
-        List<Map.Entry<String, Long>> rows = jdbc.query(sql,
-                (rs, i) -> Map.entry(rs.getString("cond"), rs.getLong("n")));
-        Map<String, Long> out = new LinkedHashMap<>();
-        rows.forEach(e -> out.put(e.getKey(), e.getValue()));
-        return out;
+        // latestPerRoad() emits "LIMIT 1 BY road_id" for the ClickHouse-specific
+        // latest-per-key pattern; only the SELECT list changes per caller.
+        Table<?> latest = latestPerRoad(WEATHER_OBS, 10, "condition");
+
+        return ctx
+                .select(
+                        function("toString", String.class, field("condition")).as("cond"),
+                        count().as("n"))
+                .from(latest)
+                .groupBy(field("cond"))
+                .orderBy(field("n").desc())
+                .fetchMap(r -> r.get("cond", String.class), r -> r.get("n", Long.class));
     }
 
     private CityPulse.WeatherSummary summarizeWeather() {
-        // ClickHouse avg() returns the IEEE float NaN (not SQL NULL) when aggregating
-        // zero rows.  ifNull() does NOT catch NaN — only isNaN() does.
-        // Jackson then serialises Double.NaN as the JSON string "NaN", breaking
-        // frontend .toFixed().  Use if(isNaN(x), fallback, x) to guarantee a real number.
-        String sql = """
-                SELECT if(isNaN(avg(temperature_c)), toFloat64(25), avg(temperature_c)) AS t,
-                       if(isNaN(avg(humidity_pct)),  toFloat64(70), avg(humidity_pct))  AS h,
-                       if(isNaN(avg(wind_kph)),       toFloat64(0),  avg(wind_kph))     AS w,
-                       if(isNaN(avg(visibility_km)), toFloat64(10), avg(visibility_km)) AS v,
-                       if(isNaN(sum(rain_mm)),        toFloat64(0),  sum(rain_mm))      AS r
-                FROM (
-                    SELECT *
-                    FROM weather_observations
-                    WHERE observed_at >= now() - INTERVAL 10 MINUTE
-                    ORDER BY road_id, observed_at DESC
-                    LIMIT 1 BY road_id
-                )
-                """;
-        return jdbc.queryForObject(sql, (rs, i) -> CityPulse.WeatherSummary.builder()
-                .avgTemperatureC(rs.getDouble("t"))
-                .avgHumidityPct(rs.getDouble("h"))
-                .avgWindKph(rs.getDouble("w"))
-                .avgVisibilityKm(rs.getDouble("v"))
-                .totalRainMm(rs.getDouble("r"))
-                .build());
+        Table<?> latest = latestPerRoad(WEATHER_OBS, 10, "*");
+
+        return ctx
+                .select(
+                        nanSafeAvg("temperature_c", 25.0).as("t"),
+                        nanSafeAvg("humidity_pct",  70.0).as("h"),
+                        nanSafeAvg("wind_kph",        0.0).as("w"),
+                        nanSafeAvg("visibility_km", 10.0).as("v"),
+                        nanSafeSum("rain_mm",          0.0).as("r"))
+                .from(latest)
+                .fetchOne(r -> CityPulse.WeatherSummary.builder()
+                        .avgTemperatureC(r.get("t", Double.class))
+                        .avgHumidityPct(r.get("h",  Double.class))
+                        .avgWindKph(r.get("w",       Double.class))
+                        .avgVisibilityKm(r.get("v",  Double.class))
+                        .totalRainMm(r.get("r",      Double.class))
+                        .build());
     }
 
-    // ---------------------------------------------------------------
-    // Environment (air quality + noise)
-    // ---------------------------------------------------------------
+    // ── Environment ───────────────────────────────────────────────────────────
+
     private CityPulse.EnvironmentSummary summarizeEnvironment() {
-        // ClickHouse avg() returns IEEE NaN (not SQL NULL) for 0 rows.
-        // isNaN() is the correct guard — ifNull() does not intercept NaN.
-        String sql = """
-                SELECT if(isNaN(avg(pm25)),     toFloat64(0),  avg(pm25))     AS pm25,
-                       if(isNaN(avg(pm10)),     toFloat64(0),  avg(pm10))     AS pm10,
-                       if(isNaN(avg(no2)),      toFloat64(0),  avg(no2))      AS no2,
-                       if(isNaN(avg(co_ppm)),   toFloat64(0),  avg(co_ppm))   AS co,
-                       if(isNaN(avg(aqi)),      toFloat64(0),  avg(aqi))      AS aqi,
-                       if(isNaN(avg(noise_db)), toFloat64(0),  avg(noise_db)) AS n
-                FROM (
-                    SELECT *
-                    FROM environment_metrics
-                    WHERE observed_at >= now() - INTERVAL 5 MINUTE
-                    ORDER BY road_id, observed_at DESC
-                    LIMIT 1 BY road_id
-                )
-                """;
-        return jdbc.queryForObject(sql, (rs, i) -> {
-            int aqi = (int) Math.round(rs.getDouble("aqi"));
-            return CityPulse.EnvironmentSummary.builder()
-                    .avgPm25(rs.getDouble("pm25"))
-                    .avgPm10(rs.getDouble("pm10"))
-                    .avgNo2(rs.getDouble("no2"))
-                    .avgCoPpm(rs.getDouble("co"))
-                    .avgAqi(aqi)
-                    .avgNoiseDb(rs.getDouble("n"))
-                    .airQualityLabel(aqiLabel(aqi))
-                    .build();
-        });
+        Table<?> latest = latestPerRoad(ENV_METRICS, 5, "*");
+
+        return ctx
+                .select(
+                        nanSafeAvg("pm25",      0.0).as("pm25"),
+                        nanSafeAvg("pm10",      0.0).as("pm10"),
+                        nanSafeAvg("no2",       0.0).as("no2"),
+                        nanSafeAvg("co_ppm",    0.0).as("co"),
+                        nanSafeAvg("aqi",       0.0).as("aqi"),
+                        nanSafeAvg("noise_db",  0.0).as("n"))
+                .from(latest)
+                .fetchOne(r -> {
+                    int aqi = (int) Math.round(r.get("aqi", Double.class));
+                    return CityPulse.EnvironmentSummary.builder()
+                            .avgPm25(r.get("pm25",     Double.class))
+                            .avgPm10(r.get("pm10",     Double.class))
+                            .avgNo2(r.get("no2",       Double.class))
+                            .avgCoPpm(r.get("co",      Double.class))
+                            .avgAqi(aqi)
+                            .avgNoiseDb(r.get("n",     Double.class))
+                            .airQualityLabel(aqiLabel(aqi))
+                            .build();
+                });
+    }
+
+    // ── Vehicle mix ───────────────────────────────────────────────────────────
+
+    private CityPulse.VehicleMixSummary summarizeVehicleMix() {
+        Table<?> latest = latestPerRoad(VEHICLE_CLASS, 5, "*");
+
+        return ctx
+                .select(
+                        nanSafeLongSum("cars").as("cars"),
+                        nanSafeLongSum("trucks").as("trucks"),
+                        nanSafeLongSum("buses").as("buses"),
+                        nanSafeLongSum("motorcycles").as("motorcycles"),
+                        nanSafeLongSum("bicycles").as("bicycles"),
+                        nanSafeLongSum("emergency").as("emergency"),
+                        nanSafeLongSum("pedestrians").as("pedestrians"))
+                .from(latest)
+                .fetchOne(r -> CityPulse.VehicleMixSummary.builder()
+                        .cars(r.get("cars",               Long.class))
+                        .trucks(r.get("trucks",           Long.class))
+                        .buses(r.get("buses",             Long.class))
+                        .motorcycles(r.get("motorcycles", Long.class))
+                        .bicycles(r.get("bicycles",       Long.class))
+                        .emergency(r.get("emergency",     Long.class))
+                        .pedestrians(r.get("pedestrians", Long.class))
+                        .build());
+    }
+
+    // ── District snapshots ────────────────────────────────────────────────────
+
+    private List<CityPulse.DistrictSnapshot> findDistrictSnapshots() {
+        // LIMIT 1 BY subqueries for latest-per-road lookups
+        Table<?> latestEnv = latestPerRoad(ENV_METRICS,      10, "road_id, aqi")
+                .as("le");
+        Table<?> latestSpeed = latestPerRoad(TRAFFIC_ANALYZED, 30, "road_id, avg_speed",
+                "window_start")
+                .as("ls");
+        Table<?> activeCounts = ctx
+                .select(field("road_id"), count().as("n"))
+                .from(INCIDENTS_FINAL)
+                .where(field("status").eq(inline("active")))
+                .groupBy(field("road_id"))
+                .asTable("ac");
+
+        Table<?> m = ROAD_META_FINAL.as("m");
+
+        return ctx
+                .select(
+                        field("m.district",    String.class),
+                        countDistinct(field("m.road_id")).as("road_count"),
+                        nanSafeAvgField(field("ls.avg_speed", Double.class), 0.0).as("avg_speed"),
+                        nanSafeAvgField(field("le.aqi",       Double.class), 0.0).as("avg_aqi"),
+                        coalesce(sum(field("ac.n", Long.class)), inline(0L)).as("active_incidents"))
+                .from(m)
+                .leftJoin(latestEnv).on(
+                        field("le.road_id").eq(field("m.road_id")))
+                .leftJoin(latestSpeed).on(
+                        field("ls.road_id").eq(field("m.road_id")))
+                .leftJoin(activeCounts).on(
+                        field("ac.road_id").eq(field("m.road_id")))
+                .groupBy(field("m.district"))
+                .orderBy(field("m.district"))
+                .fetch(r -> CityPulse.DistrictSnapshot.builder()
+                        .district(r.get("district",           String.class))
+                        .roadCount(r.get("road_count",        Integer.class))
+                        .avgSpeed(r.get("avg_speed",          Double.class))
+                        .avgAqi((int) Math.round(r.get("avg_aqi", Double.class)))
+                        .activeIncidents(r.get("active_incidents", Integer.class))
+                        .build());
+    }
+
+    // ── Road metadata ─────────────────────────────────────────────────────────
+
+    public List<Map<String, Object>> findAllRoadMeta() {
+        return ctx
+                .select(
+                        field(name("road_id"),     String.class),
+                        field(name("road_name"),   String.class),
+                        field(name("district"),    String.class),
+                        function("toString", String.class, field("road_type")).as("road_type"),
+                        field(name("lanes"),       Integer.class),
+                        field(name("speed_limit"), Integer.class),
+                        field(name("length_km"),   Double.class),
+                        field(name("lat"),         Double.class),
+                        field(name("lon"),         Double.class))
+                .from(ROAD_META_FINAL)
+                .orderBy(field(name("road_id")))
+                .fetch(r -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("roadId",     r.get("road_id",     String.class));
+                    row.put("roadName",   r.get("road_name",   String.class));
+                    row.put("district",   r.get("district",    String.class));
+                    row.put("roadType",   r.get("road_type",   String.class));
+                    row.put("lanes",      r.get("lanes",       Integer.class));
+                    row.put("speedLimit", r.get("speed_limit", Integer.class));
+                    row.put("lengthKm",   r.get("length_km",   Double.class));
+                    row.put("lat",        r.get("lat",         Double.class));
+                    row.put("lon",        r.get("lon",         Double.class));
+                    return row;
+                });
+    }
+
+    // ── Per-road drill-down ───────────────────────────────────────────────────
+
+    public Map<String, Object> findLatestWeather(String roadId) {
+        return ctx
+                .select(
+                        field(name("road_id"),        String.class),
+                        field(name("observed_at"),    LocalDateTime.class),
+                        function("toString", String.class, field("condition")).as("condition"),
+                        field(name("temperature_c"),  Float.class),
+                        field(name("humidity_pct"),   Integer.class),
+                        field(name("wind_kph"),       Float.class),
+                        field(name("visibility_km"),  Float.class),
+                        field(name("rain_mm"),        Float.class))
+                .from(WEATHER_OBS)
+                .where(field(name("road_id"), String.class).eq(roadId))
+                .orderBy(field(name("observed_at")).desc())
+                .limit(1)
+                .fetchOne(this::toWeatherMap);
+    }
+
+    public List<Map<String, Object>> findVehicleMixHistory(String roadId, int limit) {
+        return ctx
+                .select(
+                        field(name("road_id"),      String.class),
+                        field(name("observed_at"),  LocalDateTime.class),
+                        field(name("cars"),         Integer.class),
+                        field(name("trucks"),       Integer.class),
+                        field(name("buses"),        Integer.class),
+                        field(name("motorcycles"),  Integer.class),
+                        field(name("bicycles"),     Integer.class),
+                        field(name("emergency"),    Integer.class),
+                        field(name("pedestrians"),  Integer.class))
+                .from(VEHICLE_CLASS)
+                .where(field(name("road_id"), String.class).eq(roadId))
+                .orderBy(field(name("observed_at")).desc())
+                .limit(limit)
+                .fetch(r -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("roadId",      r.get("road_id",      String.class));
+                    row.put("observedAt",  toInstant(r.get("observed_at", LocalDateTime.class)));
+                    row.put("cars",        r.get("cars",         Integer.class));
+                    row.put("trucks",      r.get("trucks",       Integer.class));
+                    row.put("buses",       r.get("buses",        Integer.class));
+                    row.put("motorcycles", r.get("motorcycles",  Integer.class));
+                    row.put("bicycles",    r.get("bicycles",     Integer.class));
+                    row.put("emergency",   r.get("emergency",    Integer.class));
+                    row.put("pedestrians", r.get("pedestrians",  Integer.class));
+                    return row;
+                });
+    }
+
+    public List<Map<String, Object>> findEnvironmentHistory(String roadId, int limit) {
+        return ctx
+                .select(
+                        field(name("road_id"),     String.class),
+                        field(name("observed_at"), LocalDateTime.class),
+                        field(name("pm25"),        Float.class),
+                        field(name("pm10"),        Float.class),
+                        field(name("no2"),         Float.class),
+                        field(name("co_ppm"),      Float.class),
+                        field(name("aqi"),         Integer.class),
+                        field(name("noise_db"),    Float.class))
+                .from(ENV_METRICS)
+                .where(field(name("road_id"), String.class).eq(roadId))
+                .orderBy(field(name("observed_at")).desc())
+                .limit(limit)
+                .fetch(r -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("roadId",     r.get("road_id",    String.class));
+                    row.put("observedAt", toInstant(r.get("observed_at", LocalDateTime.class)));
+                    row.put("pm25",       r.get("pm25",       Float.class));
+                    row.put("pm10",       r.get("pm10",       Float.class));
+                    row.put("no2",        r.get("no2",        Float.class));
+                    row.put("coPpm",      r.get("co_ppm",     Float.class));
+                    row.put("aqi",        r.get("aqi",        Integer.class));
+                    row.put("noiseDb",    r.get("noise_db",   Float.class));
+                    return row;
+                });
+    }
+
+    public List<Map<String, Object>> findAllLatestWeather() {
+        return ctx
+                .select(
+                        field(name("road_id"),        String.class),
+                        field(name("observed_at"),    LocalDateTime.class),
+                        function("toString", String.class, field("condition")).as("condition"),
+                        field(name("temperature_c"),  Float.class),
+                        field(name("humidity_pct"),   Integer.class),
+                        field(name("wind_kph"),       Float.class),
+                        field(name("visibility_km"),  Float.class),
+                        field(name("rain_mm"),        Float.class))
+                .from(WEATHER_OBS)
+                .where(field("observed_at", LocalDateTime.class)
+                        .greaterOrEqual(field("now() - INTERVAL 10 MINUTE", LocalDateTime.class)))
+                .orderBy(field("road_id"), field("observed_at").desc())
+                // ClickHouse LIMIT 1 BY — no JOOQ standard equivalent;
+                // isolated here as the only remaining plain-SQL clause
+                .limit(sql("1 BY road_id"))
+                .fetch(this::toWeatherMap);
+    }
+
+    // ── ClickHouse-specific DSL helpers ───────────────────────────────────────
+
+    /**
+     * Builds a derived table that selects the most recent row per road within
+     * the last {@code minutesBack} minutes using ClickHouse's
+     * {@code LIMIT 1 BY road_id}.
+     *
+     * <p>This is the only place where a plain-SQL fragment appears; it exists
+     * because {@code LIMIT … BY} is a ClickHouse extension not representable in
+     * standard SQL or JOOQ's typed DSL. The fragment contains no user data.
+     *
+     * @param source      source table
+     * @param minutesBack look-back window in minutes (compile-time constant)
+     * @param columns     column list for the SELECT (no user input; compile-time)
+     */
+    private Table<?> latestPerRoad(Table<?> source, int minutesBack, String... columns) {
+        String cols   = columns.length == 0 ? "*" : String.join(", ", columns);
+        String tName  = source.getName();
+        String tsCol  = tName.equals("traffic_analyzed") ? "window_start" : "observed_at";
+        return table(sql(
+                "(SELECT " + cols + " FROM " + tName +
+                " WHERE " + tsCol + " >= now() - INTERVAL " + minutesBack + " MINUTE" +
+                " ORDER BY road_id, " + tsCol + " DESC" +
+                " LIMIT 1 BY road_id)"
+        )).as("lpr_" + tName);
+    }
+
+    /** Overload that lets the caller specify a custom timestamp column name. */
+    private Table<?> latestPerRoad(Table<?> source, int minutesBack,
+                                   String columns, String tsColumn) {
+        String tName = source.getName();
+        return table(sql(
+                "(SELECT " + columns + " FROM " + tName +
+                " WHERE " + tsColumn + " >= now() - INTERVAL " + minutesBack + " MINUTE" +
+                " ORDER BY road_id, " + tsColumn + " DESC" +
+                " LIMIT 1 BY road_id)"
+        )).as("lpr_" + tName);
+    }
+
+    /**
+     * {@code if(isNaN(avg(col)), fallback, avg(col))}
+     * Guards against the IEEE NaN that ClickHouse's {@code avg()} returns when
+     * aggregating zero rows (unlike standard SQL which returns NULL).
+     */
+    private static Field<Double> nanSafeAvg(String col, double fallback) {
+        Field<Double> avg = function("avg", Double.class, field(name(col)));
+        return function("if", Double.class,
+                function("isNaN", Boolean.class, avg),
+                val(fallback),
+                avg);
+    }
+
+    private static Field<Double> nanSafeAvgField(Field<Double> f, double fallback) {
+        Field<Double> avg = function("avg", Double.class, f);
+        return function("if", Double.class,
+                function("isNaN", Boolean.class, avg),
+                val(fallback),
+                avg);
+    }
+
+    /** {@code if(isNaN(sum(col)), fallback, sum(col))} — for Double sums. */
+    private static Field<Double> nanSafeSum(String col, double fallback) {
+        Field<Double> sum = function("sum", Double.class, field(name(col)));
+        return function("if", Double.class,
+                function("isNaN", Boolean.class, sum),
+                val(fallback),
+                sum);
+    }
+
+    /**
+     * {@code if(isNaN(toFloat64(sum(col))), 0, sum(col))}
+     * Guards against NaN from summing UInt32 columns over empty result sets
+     * in some ClickHouse versions.
+     */
+    private static Field<Long> nanSafeLongSum(String col) {
+        Field<Long> sum = function("sum", Long.class, field(name(col)));
+        return function("if", Long.class,
+                function("isNaN", Boolean.class,
+                        function("toFloat64", Double.class, sum)),
+                inline(0L),
+                sum);
+    }
+
+    // ── Shared row mappers ────────────────────────────────────────────────────
+
+    private Map<String, Object> toWeatherMap(Record r) {
+        if (r == null) return null;
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("roadId",       r.get("road_id",       String.class));
+        row.put("observedAt",   toInstant(r.get("observed_at", LocalDateTime.class)));
+        row.put("condition",    r.get("condition",      String.class));
+        row.put("temperatureC", r.get("temperature_c", Float.class));
+        row.put("humidityPct",  r.get("humidity_pct",  Integer.class));
+        row.put("windKph",      r.get("wind_kph",      Float.class));
+        row.put("visibilityKm", r.get("visibility_km", Float.class));
+        row.put("rainMm",       r.get("rain_mm",       Float.class));
+        return row;
+    }
+
+    private static Instant toInstant(LocalDateTime ldt) {
+        return ldt == null ? Instant.EPOCH : ldt.toInstant(ZoneOffset.UTC);
     }
 
     private static String aqiLabel(int aqi) {
@@ -183,217 +483,5 @@ public class CityPulseRepository {
         if (aqi <= 200) return "Unhealthy";
         if (aqi <= 300) return "Very Unhealthy";
         return "Hazardous";
-    }
-
-    // ---------------------------------------------------------------
-    // Vehicle mix
-    // ---------------------------------------------------------------
-    private CityPulse.VehicleMixSummary summarizeVehicleMix() {
-        // sum() of 0 rows also returns NaN for UInt32 columns in some ClickHouse versions.
-        String sql = """
-                SELECT if(isNaN(toFloat64(sum(cars))),         toUInt64(0), sum(cars))         AS cars,
-                       if(isNaN(toFloat64(sum(trucks))),       toUInt64(0), sum(trucks))       AS trucks,
-                       if(isNaN(toFloat64(sum(buses))),        toUInt64(0), sum(buses))        AS buses,
-                       if(isNaN(toFloat64(sum(motorcycles))),  toUInt64(0), sum(motorcycles))  AS motorcycles,
-                       if(isNaN(toFloat64(sum(bicycles))),     toUInt64(0), sum(bicycles))     AS bicycles,
-                       if(isNaN(toFloat64(sum(emergency))),    toUInt64(0), sum(emergency))    AS emergency,
-                       if(isNaN(toFloat64(sum(pedestrians))),  toUInt64(0), sum(pedestrians))  AS pedestrians
-                FROM (
-                    SELECT *
-                    FROM vehicle_classification
-                    WHERE observed_at >= now() - INTERVAL 5 MINUTE
-                    ORDER BY road_id, observed_at DESC
-                    LIMIT 1 BY road_id
-                )
-                """;
-        return jdbc.queryForObject(sql, (rs, i) -> CityPulse.VehicleMixSummary.builder()
-                .cars(rs.getLong("cars"))
-                .trucks(rs.getLong("trucks"))
-                .buses(rs.getLong("buses"))
-                .motorcycles(rs.getLong("motorcycles"))
-                .bicycles(rs.getLong("bicycles"))
-                .emergency(rs.getLong("emergency"))
-                .pedestrians(rs.getLong("pedestrians"))
-                .build());
-    }
-
-    // ---------------------------------------------------------------
-    // Per-district aggregates
-    // ---------------------------------------------------------------
-    private List<CityPulse.DistrictSnapshot> findDistrictSnapshots() {
-        String sql = """
-                WITH
-                  latest_env AS (
-                      SELECT road_id, aqi
-                      FROM environment_metrics
-                      WHERE observed_at >= now() - INTERVAL 10 MINUTE
-                      ORDER BY road_id, observed_at DESC
-                      LIMIT 1 BY road_id
-                  ),
-                  latest_speed AS (
-                      SELECT road_id, avg_speed
-                      FROM traffic_analyzed
-                      WHERE window_start >= now() - INTERVAL 30 MINUTE
-                      ORDER BY road_id, window_start DESC
-                      LIMIT 1 BY road_id
-                  ),
-                  active_counts AS (
-                      SELECT road_id, count() AS n
-                      FROM traffic_incidents FINAL
-                      WHERE status = 'active'
-                      GROUP BY road_id
-                  )
-                SELECT m.district                                                      AS district,
-                       count(DISTINCT m.road_id)                                       AS road_count,
-                       if(isNaN(avg(ls.avg_speed)), toFloat64(0), avg(ls.avg_speed))   AS avg_speed,
-                       if(isNaN(avg(le.aqi)),        toFloat64(0), avg(le.aqi))        AS avg_aqi,
-                       coalesce(sum(ac.n), 0)                                          AS active_incidents
-                FROM   road_metadata m FINAL
-                LEFT JOIN latest_env    le ON le.road_id = m.road_id
-                LEFT JOIN latest_speed  ls ON ls.road_id = m.road_id
-                LEFT JOIN active_counts ac ON ac.road_id = m.road_id
-                GROUP BY m.district
-                ORDER BY m.district
-                """;
-        return jdbc.query(sql, (rs, i) -> CityPulse.DistrictSnapshot.builder()
-                .district(rs.getString("district"))
-                .roadCount(rs.getInt("road_count"))
-                .avgSpeed(rs.getDouble("avg_speed"))
-                .avgAqi((int) Math.round(rs.getDouble("avg_aqi")))
-                .activeIncidents(rs.getInt("active_incidents"))
-                .build());
-    }
-
-    // ---------------------------------------------------------------
-    // Road metadata list (used by /api/v1/roads/meta)
-    // ---------------------------------------------------------------
-    public List<Map<String, Object>> findAllRoadMeta() {
-        String sql = """
-                SELECT road_id,
-                       road_name,
-                       district,
-                       toString(road_type) AS road_type,
-                       lanes,
-                       speed_limit,
-                       length_km,
-                       lat,
-                       lon
-                FROM road_metadata FINAL
-                ORDER BY road_id
-                """;
-        return jdbc.query(sql, (rs, i) -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("roadId",     rs.getString("road_id"));
-            row.put("roadName",   rs.getString("road_name"));
-            row.put("district",   rs.getString("district"));
-            row.put("roadType",   rs.getString("road_type"));
-            row.put("lanes",      rs.getInt("lanes"));
-            row.put("speedLimit", rs.getInt("speed_limit"));
-            row.put("lengthKm",   rs.getDouble("length_km"));
-            row.put("lat",        rs.getDouble("lat"));
-            row.put("lon",        rs.getDouble("lon"));
-            return row;
-        });
-    }
-
-    // ---------------------------------------------------------------
-    // Per-road endpoints (drill-down)
-    // ---------------------------------------------------------------
-    public Map<String, Object> findLatestWeather(String roadId) {
-        String sql = """
-                SELECT road_id,
-                       observed_at,
-                       toString(condition) AS condition,
-                       temperature_c,
-                       humidity_pct,
-                       wind_kph,
-                       visibility_km,
-                       rain_mm
-                FROM weather_observations
-                WHERE road_id = ?
-                ORDER BY observed_at DESC
-                LIMIT 1
-                """;
-        List<Map<String, Object>> out = jdbc.query(sql, new Object[]{roadId}, (rs, i) -> weatherRow(rs));
-        return out.isEmpty() ? null : out.get(0);
-    }
-
-    public List<Map<String, Object>> findVehicleMixHistory(String roadId, int limit) {
-        String sql = String.format("""
-                SELECT road_id, observed_at, cars, trucks, buses,
-                       motorcycles, bicycles, emergency, pedestrians
-                FROM vehicle_classification
-                WHERE road_id = ?
-                ORDER BY observed_at DESC
-                LIMIT %d
-                """, limit);
-        return jdbc.query(sql, new Object[]{roadId}, (rs, i) -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("roadId",      rs.getString("road_id"));
-            row.put("observedAt",  rs.getTimestamp("observed_at").toInstant());
-            row.put("cars",        rs.getInt("cars"));
-            row.put("trucks",      rs.getInt("trucks"));
-            row.put("buses",       rs.getInt("buses"));
-            row.put("motorcycles", rs.getInt("motorcycles"));
-            row.put("bicycles",    rs.getInt("bicycles"));
-            row.put("emergency",   rs.getInt("emergency"));
-            row.put("pedestrians", rs.getInt("pedestrians"));
-            return row;
-        });
-    }
-
-    public List<Map<String, Object>> findEnvironmentHistory(String roadId, int limit) {
-        String sql = String.format("""
-                SELECT road_id, observed_at, pm25, pm10, no2, co_ppm, aqi, noise_db
-                FROM environment_metrics
-                WHERE road_id = ?
-                ORDER BY observed_at DESC
-                LIMIT %d
-                """, limit);
-        return jdbc.query(sql, new Object[]{roadId}, (rs, i) -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("roadId",     rs.getString("road_id"));
-            row.put("observedAt", rs.getTimestamp("observed_at").toInstant());
-            row.put("pm25",       rs.getFloat("pm25"));
-            row.put("pm10",       rs.getFloat("pm10"));
-            row.put("no2",        rs.getFloat("no2"));
-            row.put("coPpm",      rs.getFloat("co_ppm"));
-            row.put("aqi",        rs.getInt("aqi"));
-            row.put("noiseDb",    rs.getFloat("noise_db"));
-            return row;
-        });
-    }
-
-    private static Map<String, Object> weatherRow(ResultSet rs) throws SQLException {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("roadId",       rs.getString("road_id"));
-        row.put("observedAt",   rs.getTimestamp("observed_at").toInstant());
-        row.put("condition",    rs.getString("condition"));
-        row.put("temperatureC", rs.getFloat("temperature_c"));
-        row.put("humidityPct",  rs.getInt("humidity_pct"));
-        row.put("windKph",      rs.getFloat("wind_kph"));
-        row.put("visibilityKm", rs.getFloat("visibility_km"));
-        row.put("rainMm",       rs.getFloat("rain_mm"));
-        return row;
-    }
-
-    public List<Map<String, Object>> findAllLatestWeather() {
-        // Use an explicit RowMapper rather than a RowCallbackHandler — the
-        // clickhouse-jdbc 0.6.3 driver trips on some callback iteration paths.
-        String sql = """
-                SELECT road_id,
-                       observed_at,
-                       toString(condition) AS condition,
-                       temperature_c,
-                       humidity_pct,
-                       wind_kph,
-                       visibility_km,
-                       rain_mm
-                FROM weather_observations
-                WHERE observed_at >= now() - INTERVAL 10 MINUTE
-                ORDER BY road_id, observed_at DESC
-                LIMIT 1 BY road_id
-                """;
-        return jdbc.query(sql, (rs, i) -> weatherRow(rs));
     }
 }

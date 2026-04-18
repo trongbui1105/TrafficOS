@@ -93,6 +93,12 @@
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
 
+        <!-- JOOQ: type-safe SQL DSL (replaces raw JdbcTemplate queries) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jooq</artifactId>
+        </dependency>
+
         <!-- Actuator + Prometheus -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
